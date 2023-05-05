@@ -233,7 +233,7 @@ class LogicDataset(Dataset):
         
         return examples_by_depth
 
-def limit_examples(examples_by_depth, max_depth_during_train, control_num = 2000):
+def limit_examples(examples_by_depth, max_depth_during_train, control_num = 10):
 
     for key in list(examples_by_depth.keys()):
         if key > max_depth_during_train:
@@ -268,7 +268,7 @@ def merge_and_balance_dataset(
     
         examples_by_depth = defaultdict(list)
         for example in examples:
-            examples_by_depth[example[depth]].append(example)
+            examples_by_depth[example["depth"]].append(example)
         
         all_examples.extend(limit_examples(examples_by_depth, max_depth_during_train, control_num = control_num))
 

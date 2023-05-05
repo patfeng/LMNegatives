@@ -1,6 +1,6 @@
-mkdir -p $4
+mkdir -p OUTPUT/LP/BERT/
 
-CUDA_VISIBLE_DEVICES=$1 python -m torch.distributed.launch --master_port=$3 --nproc_per_node=$2 finetune_simplified.py \
+CUDA_VISIBLE_DEVICES= 0,1,2,3 python -m torch.distributed.launch --master_port=9820 --nproc_per_node=4 finetune_simplified.py \
     --model_type bert \
     --tokenizer_name=bert-base-uncased \
     --model_name_or_path bert-base-uncased \
@@ -21,6 +21,16 @@ CUDA_VISIBLE_DEVICES=$1 python -m torch.distributed.launch --master_port=$3 --np
     --seed 10 \
     --output_dir $4 \
     --change_positional_embedding_after_loading \
-    ${@:5}
+     --num_train_epochs 20.0 \
+    --gradient_accumulation_steps 8 --per_gpu_train_batch_size=2 \
+    --train_file_path DATA/LP/prop_examples.balanced_by_backward.max_6.json_train \--val_file_path DATA/LP/prop_examples.balanced_by_backward.max_6.json_val
 
 
+
+
+bash scripts/5_train_bert.bash \
+ 0,1,2,3 4 9820 \
+ OUTPUT/LP/BERT/ \
+ --num_train_epochs 20.0 \
+ --gradient_accumulation_steps 8 --per_gpu_train_batch_size=2 \
+ --train_file_path DATA/LP/prop_examples.balanced_by_backward.max_6.json_train --val_file_path DATA/LP/prop_examples.balanced_by_backward.max_6.json_val

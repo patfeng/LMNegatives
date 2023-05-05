@@ -8,12 +8,13 @@ import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool
 
+
 def init():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--vocab_file', default='vocab.txt', type=str)
     arg_parser.add_argument('--output_file', default='prop_examples.txt', type=str)
 
-    arg_parser.add_argument('--example_num', default=1000, type=int)
+    arg_parser.add_argument('--example_num', default=100, type=int)
     arg_parser.add_argument('--min_pred_num', default=5, type=int)
     arg_parser.add_argument('--max_pred_num', default=30, type=int)
 
@@ -42,9 +43,17 @@ def sample_one_rule(preds):
     return (lits[:-1], lits[-1])
 
 
-def sample_rule_priority(preds):
+def sample_rule_priority(preds): ##### FACTS CANNOT CONTRADICT
+
     pred_num = len(preds)
-    rule_num = random.randint(0, 4 * pred_num)
+    neg_preds=[]
+    preds = [random.choice([x,"not "+x] ) for x in preds]
+    for i in preds:
+        if random.choice([True, False]):    
+            neg_preds.append(convert_not(i))
+    preds+=neg_preds
+
+    rule_num = random.randint(0, int(1.5 * pred_num))
     fact_num = random.randint(0, pred_num)
 
     cache = set()
@@ -59,10 +68,11 @@ def sample_rule_priority(preds):
                 break
         rules.append(rule)
 
+    #preds = preds+["not "+x for x in preds]
     facts = random.sample(preds, fact_num)
 
     query = random.sample(preds, 1)[0]
-
+    #print(rules, facts, query)
     return rules, facts, query
 
 
@@ -216,7 +226,7 @@ def sample_lp_star(preds):
     return rules, facts, query
 
 
-def forward_chain(rules, facts):
+def forward_chain(rules, facts): #### CANNOT BE TRUE AND NOT TRUE, RETURN FAILURE AND RETRY IN process_example ????
     res = {}
     for fact in facts:
         res[fact] = 0
@@ -239,6 +249,12 @@ def forward_chain(rules, facts):
 
 
 def backward_chain_(u, depth, rules, facts, max_depth, ances):
+    print(u)
+    print(depth)
+    print(rules)
+    print(facts)
+    print(max_depth)
+    print(ances)
     INF = 100000000
     if u in facts:
         return INF
@@ -261,55 +277,83 @@ def backward_chain_(u, depth, rules, facts, max_depth, ances):
 def backward_chain(query, rules, facts, max_depth):
     return backward_chain_(query, 0, rules, facts, max_depth, set())
 
+def convert_not(word):
+    if(word[:4] == "not "):
+        return word[4:] 
+    return "not "+word
 
 def process_example(example, max_depth):
+
     [random.shuffle(rule[0]) for rule in example['rules']]
     random.shuffle(example['rules'])
     random.shuffle(example['facts'])
 
     res = forward_chain(example['rules'], example['facts'])
+    #print("res: " + str(res))
+    #print()
+    
+    #base = example["query"][4:] if example["query"][:4] == "not " else example["query"]
+    for i in res:
+        if convert_not(i) in res: #contradiction
+            return False
+    if (example["query"] in res)== (convert_not(example["query"]) in res): #xor query
+        return False
+
 
     example['label'] = 1 if example['query'] in res else 0
 
-    if example['label'] == 0:
-        depth = backward_chain(example['query'], example['rules'], example['facts'], max_depth + 1)
-    else:
+    #print("bbackchain")
+    if example['label'] == 1:
         depth = res[example['query']]
-
+    else:
+        depth = res[convert_not(example['query'])]
+    #print("abackchain")
     example['depth'] = depth
+    return True
 
 
-def sample_one_example(vocab, min_pred_num, max_pred_num, max_depth, algo):
+def sample_one_example(vocab, min_pred_num, max_pred_num, max_depth, algo, use_negatives):
     pred_num = random.randint(min_pred_num, max_pred_num)
-    preds = random.sample(vocab, pred_num)
-    if algo == 'RP':
-        rules, facts, query = sample_rule_priority(preds)
-    if algo == 'LP':
-        rules, facts, query = sample_label_priority(preds)
-    if algo == 'LP_STAR':
-        rules, facts, query = sample_lp_star(preds)
+    neg_vocab = vocab + ["not "+x for x in vocab]
+    while(True):
+        preds = random.sample(vocab, pred_num)
+        if algo == 'RP':
+            rules, facts, query = sample_rule_priority(preds)
+        if algo == 'LP':
+            rules, facts, query = sample_label_priority(preds)
+        if algo == 'LP_STAR':
+            rules, facts, query = sample_lp_star(preds)
 
-    if query is None:
-        return None
+        if query is None:
+            return None
 
-    example = {
-        'preds': preds,
-        'rules': rules,
-        'facts': facts,
-        'query': query
-    }
+        example = {
+            'preds': preds,
+            'rules': rules,
+            'facts': facts,
+            'query': query
+        }
+        #print("bprocess")
 
-    process_example(example, max_depth)
+        if(process_example(example, max_depth)):
+            break
+    #print("aprocess")
+    if random.choice([True,False]):
+        example["label"] = (example["label"]+1)%2
+        example["query"] = convert_not(example["query"])
+
+
 
     return example
 
 
-def sample_examples(example_num, vocab, min_pred_num, max_pred_num, max_depth, algo):
+def sample_examples(example_num, vocab, min_pred_num, max_pred_num, max_depth, algo, use_negatives=True):
     examples = []
+
     for _ in tqdm(range(0, example_num)):
         example = None
         while example is None:
-            example = sample_one_example(vocab, min_pred_num, max_pred_num, max_depth, algo)
+            example = sample_one_example(vocab, min_pred_num, max_pred_num, max_depth, algo, use_negatives)
         examples.append(example)
     return examples
 
@@ -322,7 +366,7 @@ def stats(examples):
     if example_num == 0:
         return
     for example in examples:
-        label_sum += example['label']
+        label_sum += (example['label'])
         depth_sum += example['depth']
     print('# of examples:', example_num)
     print('percentage of positive example:', label_sum / example_num)
@@ -337,7 +381,10 @@ def write_examples(examples, output_file):
 
 def main():
     args = init()
+
     vocab = read_vocab(args.vocab_file)
+    #for in vocab:
+
 
     if args.balance_by_depth:
         examples = {}
@@ -348,8 +395,8 @@ def main():
             examples[k] = []
 
         while True:
-            examples_ = sample_examples(1000,
-                vocab, args.min_pred_num, args.max_pred_num, args.max_depth, args.algo)
+            examples_ = sample_examples(args.example_num*args.max_depth,
+                vocab, args.min_pred_num, args.max_pred_num, args.max_depth, args.algo, True)
             for example in examples_:
                 if example['depth'] > args.max_depth:
                     continue
@@ -358,17 +405,41 @@ def main():
                 if len(examples[key]) < args.example_num:
                     examples[key].append(example)
 
+            print([len(examples[k]) for k in keys])
+
             if all([len(examples[k]) == args.example_num for k in keys]):
+                
                 break
 
         examples = [x for k in keys for x in examples[k]]
+
+        
+
 
     else:
         examples = sample_examples(args.example_num,
             vocab, args.min_pred_num, args.max_pred_num, args.max_depth, args.algo)
 
+    for ex in examples:
+        print("preds")
+        print(ex["preds"])
+
+        print("rules: ")
+        for rule in ex["rules"]:
+            print("\t"+str(rule))
+
+        print("facts:")
+        for fact in ex["facts"]:
+            print("\t"+str(fact))
+        print("query: " + str(ex["query"]))
+        print("label: " + str(ex["label"]))
+        print("depth: " + str(ex["depth"]))
+        print("\n\n")
+
+
     stats(examples)
     write_examples(examples, args.output_file)
+
 
 
 if __name__ == '__main__':
